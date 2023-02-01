@@ -84,29 +84,23 @@ impl Database {
     }
 }
 
-impl From<&str> for ConnectOptions {
-    fn from(string: &str) -> ConnectOptions {
-        ConnectOptions::from_str(string)
-    }
-}
-
-impl From<&String> for ConnectOptions {
-    fn from(string: &String) -> ConnectOptions {
-        ConnectOptions::from_str(string.as_str())
-    }
-}
-
-impl From<String> for ConnectOptions {
-    fn from(string: String) -> ConnectOptions {
-        ConnectOptions::new(string)
+impl<T> From<T> for ConnectOptions
+where
+    T: Into<String>,
+{
+    fn from(s: T) -> ConnectOptions {
+        ConnectOptions::new(s.into())
     }
 }
 
 impl ConnectOptions {
     /// Create new [ConnectOptions] for a [Database] by passing in a URI string
-    pub fn new(url: String) -> Self {
+    pub fn new<T>(url: T) -> Self
+    where
+        T: Into<String>,
+    {
         Self {
-            url,
+            url: url.into(),
             max_connections: None,
             min_connections: None,
             connect_timeout: None,
@@ -118,10 +112,6 @@ impl ConnectOptions {
             sqlcipher_key: None,
             schema_search_path: None,
         }
-    }
-
-    fn from_str(url: &str) -> Self {
-        Self::new(url.to_owned())
     }
 
     #[cfg(feature = "sqlx-dep")]
