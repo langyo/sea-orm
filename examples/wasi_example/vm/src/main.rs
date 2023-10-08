@@ -1,60 +1,99 @@
-use anyhow::{Context, Result};
-use tokio::sync::mpsc;
+use anyhow::Result;
+use bytes::Bytes;
 
-use wasmtime::*;
-use wasmtime_wasi::{sync::WasiCtxBuilder, WasiCtx};
+use wasmtime::{
+    component::{Component, Linker},
+    Engine, Module, Store, StoreLimits,
+};
+use wasmtime_wasi::preview2::{
+    command, HostOutputStream, IsATTY, OutputStreamError, Table, WasiCtx, WasiCtxBuilder, WasiView,
+};
 
 lazy_static::lazy_static! {
     static ref STORE: Option<Store<WasiCtx>> = None;
+}
+
+struct VirtualOutputFile {
+    data: Vec<u8>,
+}
+
+impl VirtualOutputFile {
+    fn new() -> Self {
+        Self { data: Vec::new() }
+    }
+}
+
+#[async_trait::async_trait]
+impl HostOutputStream for VirtualOutputFile {
+    fn write(&mut self, bytes: Bytes) -> Result<(), OutputStreamError> {
+        self.data.extend_from_slice(&bytes);
+        println!("write: {:?}", String::from_utf8_lossy(&bytes));
+        Ok(())
+    }
+
+    fn flush(&mut self) -> Result<(), OutputStreamError> {
+        println!("flush");
+        Ok(())
+    }
+
+    async fn write_ready(&mut self) -> Result<usize, OutputStreamError> {
+        println!("write_ready");
+        Ok(256)
+    }
+}
+pub(crate) struct RunnerHostCtx {
+    pub(crate) wasi: WasiCtx,
+    pub(crate) limits: StoreLimits,
+    pub(crate) table: Table,
+}
+
+impl WasiView for RunnerHostCtx {
+    fn table(&self) -> &Table {
+        &self.table
+    }
+    fn table_mut(&mut self) -> &mut Table {
+        &mut self.table
+    }
+    fn ctx(&self) -> &WasiCtx {
+        &self.wasi
+    }
+    fn ctx_mut(&mut self) -> &mut WasiCtx {
+        &mut self.wasi
+    }
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let engine = Engine::default();
     let module = Module::from_file(&engine, "./target/wasm32-wasi/debug/api.wasm")?;
+    let mut table = Table::new();
 
     let wasi = WasiCtxBuilder::new()
-        .inherit_stdio()
-        .inherit_args()?
-        .build();
+        .stdout(VirtualOutputFile::new(), IsATTY::No)
+        .build(&mut table)?;
+    let context = RunnerHostCtx {
+        wasi,
+        limits: StoreLimits::default(),
+        table,
+    };
 
-    let mut linker = Linker::new(&engine);
-    let mut store = Store::new(&engine, wasi);
+    let mut linker = Linker::<RunnerHostCtx>::new(&engine);
+    let mut store = Store::new(&engine, context);
+    command::add_to_linker(&mut linker)?;
 
-    wasmtime_wasi::add_to_linker(&mut linker, |s| s)?;
+    let component = Component::from_utf8_lossy(
+        r#"
+package seaorm:demo
 
-    let (tx, mut rx) = mpsc::channel::<(usize, usize)>(32);
+world proxy {
+  export query: func(msg: string) -> result<string>
+}
+    "#,
+    );
+    let (wasi_cmd, _instance) =
+        command::Command::instantiate_async(&mut store, &component, &linker).await?;
+    let r = wasi_cmd.call(&mut store).await?;
+    println!("Result: {:?}", r);
 
-    let count = std::sync::Arc::new(std::sync::Mutex::new(0));
-    linker.func_wrap("sea-orm", "query", move |ptr: i32, len: i32| -> i32 {
-        let tx = tx.clone();
-        tokio::spawn(async move {
-            tx.send((ptr as usize, len as usize)).await.unwrap();
-        });
-
-        let count = count.clone();
-        let mut count = count.lock().unwrap();
-        *count += 1;
-        *count
-    })?;
-
-    linker.module(&mut store, "", &module)?;
-
-    linker
-        .get_default(&mut store, "")?
-        .typed::<(), ()>(&store)?
-        .call(&mut store, ())?;
-
-    let instance = linker.instantiate(&mut store, &module)?;
-
-    loop {
-        let (ptr, len) = rx.recv().await.context("Cannot receive message")?;
-        println!("ptr: {}, len: {}", ptr, len);
-        let memory = instance
-            .get_memory(&mut store, "memory")
-            .expect("Cannot get memory");
-        let data = memory.data(&mut store);
-        let str = std::str::from_utf8(&data[ptr..ptr + len]).context("Cannot convert to str")?;
-        println!("str: {}", str);
-    }
+    Ok(())
 }

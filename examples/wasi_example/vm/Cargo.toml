@@ -8,6 +8,8 @@ publish = false
 anyhow = "^1"
 lazy_static = "^1"
 tokio = { version = "^1", features = ["full"] }
+bytes = "*"
+async-trait = "*"
 
-wasmtime = "^13"
+wasmtime = { version = "^13", features = ["component-model"] }
 wasmtime-wasi = "^13"
