@@ -11,8 +11,8 @@ use std::{
 
 use gluesql::prelude::{Glue, MemoryStorage};
 use sea_orm::{
-    ActiveValue::Set, Database, DbBackend, DbErr, EntityTrait, ProxyDatabaseTrait, ProxyExecResult,
-    ProxyRow, Statement,
+    ActiveModelTrait, ActiveValue::Set, Database, DbBackend, DbErr, EntityTrait,
+    ProxyDatabaseTrait, ProxyExecResult, ProxyRow, Statement,
 };
 
 use entity::post::{ActiveModel, Entity};
@@ -128,7 +128,7 @@ async fn main() {
     glue.execute(
         r#"
             CREATE TABLE IF NOT EXISTS posts (
-                id UUID PRIMARY KEY,
+                id TEXT PRIMARY KEY,
                 title TEXT NOT NULL,
                 text TEXT NOT NULL
             )
@@ -153,19 +153,20 @@ async fn main() {
         title: Set("Homo".to_owned()),
         text: Set("いいよ、来いよ".to_owned()),
     };
-    Entity::insert(data).exec(&db).await.unwrap();
+    data.insert(&db).await.unwrap();
+
     let data = ActiveModel {
         id: Set(uuid::Uuid::new_v4()),
         title: Set("Homo".to_owned()),
         text: Set("そうだよ".to_owned()),
     };
     Entity::insert(data).exec(&db).await.unwrap();
-    let data = ActiveModel {
-        id: Set(uuid::Uuid::new_v4()),
-        title: Set("Homo".to_owned()),
-        text: Set("悔い改めて".to_owned()),
-    };
-    Entity::insert(data).exec(&db).await.unwrap();
+    // let data = ActiveModel {
+    //     id: Set("野兽邸".to_string()),
+    //     title: Set("Homo".to_owned()),
+    //     text: Set("悔い改めて".to_owned()),
+    // };
+    // Entity::insert(data).exec(&db).await.unwrap();
 
     let list = Entity::find().all(&db).await.unwrap().to_vec();
     println!("Result: {:?}", list);

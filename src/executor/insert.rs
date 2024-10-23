@@ -247,8 +247,9 @@ where
             if res.rows_affected() == 0 {
                 return Err(DbErr::RecordNotInserted);
             }
-            if let Some(sea_query::Value::BigUnsigned(Some(last_insert_id))) = res.last_insert_id()
-            {
+
+            let last_insert_id = res.last_insert_id();
+            if let Some(sea_query::Value::BigUnsigned(Some(last_insert_id))) = last_insert_id {
                 // For MySQL, the affected-rows number:
                 //   - The affected-rows value per row is `1` if the row is inserted as a new row,
                 //   - `2` if an existing row is updated,
@@ -259,6 +260,16 @@ where
                 }
                 Some(
                     ValueTypeOf::<A>::try_from_u64(last_insert_id)
+                        .map_err(|_| DbErr::UnpackInsertId)?,
+                )
+            } else if let Some(sea_query::Value::String(Some(last_insert_id))) = last_insert_id {
+                Some(
+                    ValueTypeOf::<A>::try_from_string(*last_insert_id)
+                        .map_err(|_| DbErr::UnpackInsertId)?,
+                )
+            } else if let Some(sea_query::Value::Uuid(Some(last_insert_id))) = last_insert_id {
+                Some(
+                    ValueTypeOf::<A>::try_from_string(last_insert_id.to_string())
                         .map_err(|_| DbErr::UnpackInsertId)?,
                 )
             } else {
